@@ -1,0 +1,33 @@
+
+// ReSharper disable CppInitializedValueIsAlwaysRewritten
+#pragma kernel RenderSelectedCells
+
+#define Buf RWStructuredBuffer
+
+Buf<int> _selected;
+RWTexture2D<float4> _renderTexture;
+
+int2 _simRes;
+int2 _renderRes;
+
+float3 _currentCellColor;
+
+#define _simResX _simRes.x
+#define _simResY _simRes.y
+
+#include "positions.cginc"
+
+[numthreads(8,8,1)]
+void RenderSelectedCells(uint3 id : SV_DispatchThreadID)
+{
+    uint2 renderXY = id.xy;
+    float2 simPosF = (float2)renderXY * _simRes / _renderRes;
+    int2 simXY = (int2)simPosF;
+    int offset = posiToIdx(simXY);
+    if(_selected[offset] != 1) return;
+    float2 subT = frac(simPosF);
+    if(! (subT.x < 0.1 || subT.y < 0.1 || subT.x > 0.9 || subT.y > 0.9) ) {
+        return;
+    }
+    _renderTexture[renderXY] = float4(_currentCellColor, 0);
+}

@@ -1,0 +1,73 @@
+#pragma kernel MaxAbsBuffer
+#pragma kernel AbsThresholdPooling
+
+#define Buf RWStructuredBuffer
+
+#define THREAD_BLOCK_SIZE 8 // assume they are squared, to simplify
+#define CHUNK_SIZE 8  // assume they are squared, to simplify
+#define LOG2_CHUNK_SIZE 3 // for division
+
+Buf<float> _src;
+Buf<float> _dest;
+
+int2 _simRes;
+
+int _chunkOverlap;
+
+float _divergenceThreshold;
+
+#define _simResX (_simRes.x)
+#define _simResY (_simRes.y)
+
+[numthreads(THREAD_BLOCK_SIZE, THREAD_BLOCK_SIZE, 1)]
+void MaxAbsBuffer(uint3 id : SV_DispatchThreadID)
+{
+    int2 pos = (int2)id;
+
+    int2 chunkPos = pos;
+    int2 chunkRes = (_simRes + CHUNK_SIZE - 1) >> LOG2_CHUNK_SIZE;
+    if(chunkPos.x < chunkRes.x && chunkPos.y < chunkRes.y) {
+        int2 chunkStart = max(0, chunkPos << LOG2_CHUNK_SIZE - _chunkOverlap);
+        int2 chunkEndExcl = min(_simRes, chunkStart + CHUNK_SIZE + _chunkOverlap);
+        float maxValue = 0.0;
+        for(int i = chunkStart.x; i < chunkEndExcl.x; i++) {
+            int srcOffsetI = i * _simRes.y;
+            for(int j = chunkStart.y; j < chunkEndExcl.y; j++) {
+                int srcOffset = srcOffsetI + j;
+                float currentValue = abs(_src[srcOffset]);
+                maxValue = max(maxValue, currentValue);
+            }
+        }
+        int tgtOffset = chunkPos.x * chunkRes.y + chunkPos.y;
+        _dest[tgtOffset] = maxValue;
+    }
+}
+
+[numthreads(THREAD_BLOCK_SIZE, THREAD_BLOCK_SIZE, 1)]
+void AbsThresholdPooling(uint3 id : SV_DispatchThreadID)
+{
+    int2 pos = (int2)id;
+
+    int2 chunkPos = pos;
+    int2 chunkRes = (_simRes + CHUNK_SIZE - 1) >> LOG2_CHUNK_SIZE;
+    if(chunkPos.x < chunkRes.x && chunkPos.y < chunkRes.y) {
+        int2 chunkStart = chunkPos << LOG2_CHUNK_SIZE;
+        // first use chunkStart to calculate chunkEndExcl...
+        int2 chunkEndExcl = min(_simRes, chunkStart + CHUNK_SIZE + _chunkOverlap);
+        // ... and then subtract chunkOverlap
+        chunkStart = max(0, chunkStart - _chunkOverlap);
+        float maxValue = 0.0;
+        for(int i = chunkStart.x; i < chunkEndExcl.x; i++) {
+            int srcOffsetI = i * _simRes.y;
+            for(int j = chunkStart.y; j < chunkEndExcl.y; j++) {
+                int srcOffset = srcOffsetI + j;
+                float currentValue = abs(_src[srcOffset]);
+                if(currentValue >= _divergenceThreshold) {
+                    maxValue = 1;
+                }
+            }
+        }
+        int tgtOffset = chunkPos.x * chunkRes.y + chunkPos.y;
+        _dest[tgtOffset] = maxValue;
+    }
+}

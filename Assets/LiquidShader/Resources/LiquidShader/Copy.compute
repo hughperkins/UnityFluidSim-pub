@@ -1,0 +1,38 @@
+#pragma kernel CopyFloat4s
+#pragma kernel CopyFloats
+
+#define Buf RWStructuredBuffer
+
+Buf<float4> _srcFloat4s;
+Buf<float4> _destFloat4s;
+
+Buf<float> _srcFloats;
+Buf<float> _destFloats;
+
+int _srcOffset;
+int _destOffset;
+
+int _simResX;
+int _simResY;
+
+// #include "ShaderUtils.cginc"
+
+[numthreads(8,8,1)]
+void CopyFloat4s(uint3 id : SV_DispatchThreadID) 
+{
+    int2 pos = (uint2)(id.xy);
+    if(pos.x < _simResX && pos.y < _simResY) {
+        int simOffset = pos.x * _simResY + pos.y;
+        _destFloat4s[_destOffset + simOffset] = _srcFloat4s[_srcOffset + simOffset];
+    }
+}
+
+[numthreads(8,8,1)]
+void CopyFloats(uint3 id : SV_DispatchThreadID) 
+{
+    int2 pos = (uint2)(id.xy);
+    if(pos.x < _simResX && pos.y < _simResY) {
+        int simOffset = pos.x * _simResY + pos.y;
+        _destFloats[_destOffset + simOffset] = _srcFloats[_srcOffset + simOffset];
+    }
+}

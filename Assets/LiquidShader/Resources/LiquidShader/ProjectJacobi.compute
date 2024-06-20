@@ -1,0 +1,146 @@
+#pragma kernel Project1
+#pragma kernel Project2
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+Buf<float> _u23;
+Buf<float> _v23;
+
+int _u2Offset;
+int _u3Offset;
+int _v2Offset;
+int _v3Offset;
+
+Buf<int> _isFluid;
+Buf<float> _divergence;
+Buf<float> _divergenceChunks;
+
+Buf<float3> _debug;
+
+int _simResX;
+int _simResY;
+
+int _useDivergenceChunks;
+int _divergenceChunkSizeLog2;
+
+int _saveDivergence;
+
+#include "positions.cginc"
+
+[numthreads(8,8,1)]
+void Project1(uint3 id: SV_DispatchThreadID) {
+    /*
+    inputs:
+    - u
+    - v
+    - s
+    - simResX
+    - simResY
+    - divergence chunks
+
+    outputs:
+    - u2
+    - v2
+    - u3
+    - v3
+    */
+    int2 pos = (int2)(id.xy);
+
+    if(pos.x >= _simResX || pos.y >= _simResY) {
+        return;
+    }
+    int2 simRes = int2(_simResX, _simResY);
+    int offset = pos.x * _simResY + pos.y;
+
+    if(_useDivergenceChunks) {
+        int2 chunkPos = pos >> _divergenceChunkSizeLog2;
+        int2 chunkRes = simRes >> _divergenceChunkSizeLog2;
+        int chunkOffset = chunkPos.x * chunkRes.y + chunkPos.y;
+        float div = _divergenceChunks[chunkOffset];
+        if(div == 0) {
+            return;
+        }
+    }
+
+    float d = 0;
+    float u_right = 0;
+    float u_here = 0;
+    float v_up = 0;
+    float v_here = 0;
+    if(pos.x > 0 && pos.y > 0 && pos.x < _simResX - 1 && pos.y < _simResY - 1) {
+        if(_isFluid[offset] == 1) {
+            int s_sum =
+                _isFluid[L(offset)] +
+                _isFluid[R(offset)] +
+                _isFluid[U(offset)] +
+                _isFluid[D(offset)];
+            if(s_sum != 0) {
+                d =
+                    - _horizVel[offset] + _horizVel[R(offset)]
+                    - _vertVel[offset] + _vertVel[U(offset)];
+                float d_pre = d * 0.5 / s_sum;
+                u_here = _isFluid[L(offset)] == 1 ? d_pre : 0;
+                u_right = _isFluid[R(offset)] == 1 ? - d_pre : 0;
+                v_here = _isFluid[D(offset)] == 1 ? d_pre : 0;
+                v_up = _isFluid[U(offset)] == 1 ? - d_pre : 0;
+            }
+        }
+    }
+    if(pos.x < _simResX && pos.y < _simResY) {
+        if(pos.x < _simResX - 1) _u23[_u2Offset + R(offset)] = u_right;
+        if(pos.y < _simResY - 1) _v23[_v2Offset + U(offset)] = v_up;
+        _u23[_u3Offset + offset] = _horizVel[offset] + u_here;
+        _v23[_v3Offset + offset] = _vertVel[offset] + v_here;
+
+        if(_saveDivergence) {
+            _divergence[offset] = d;
+        }
+    }
+}
+
+[numthreads(8,8,1)]
+void Project2(uint3 id: SV_DispatchThreadID) {
+    /*
+    inputs:
+    - u2
+    - v2
+    - u3
+    - v3
+    - s
+    - simResX
+    - simResY
+    - divergence chunks
+
+    outputs:
+    - u
+    - v
+    */
+    int2 pos = (int2)(id.xy);
+
+    if(pos.x >= _simResX || pos.y >= _simResY) {
+        return;
+    }
+    int2 simRes = int2(_simResX, _simResY);
+    int offset = pos.x * _simResY + pos.y;
+
+    if(_useDivergenceChunks) {
+        int2 chunkPos = pos >> _divergenceChunkSizeLog2;
+        int2 chunkRes = simRes >> _divergenceChunkSizeLog2;
+        int chunkOffset = chunkPos.x * chunkRes.y + chunkPos.y;
+        float div = _divergenceChunks[chunkOffset];
+        if(div == 0) {
+            return;
+        }
+    }
+
+    if(pos.x < _simResX && pos.y < _simResY) {
+        if(_isFluid[offset] == 1) {
+            float u2_offset = pos.x > 1 ? _u23[_u2Offset + offset] : 0;
+            float v2_offset = pos.y > 1 ? _v23[_v2Offset + offset] : 0;
+            _horizVel[offset] = u2_offset + _u23[_u3Offset + offset];
+            _vertVel[offset] = v2_offset + _v23[_v3Offset + offset];
+        }
+    }
+}

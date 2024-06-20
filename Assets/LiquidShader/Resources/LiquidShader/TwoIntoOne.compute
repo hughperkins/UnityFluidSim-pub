@@ -1,0 +1,36 @@
+#pragma kernel SquashHoriz
+
+#define Buf RWStructuredBuffer
+
+RWTexture2D<float4> _renderTexture;
+RWTexture2D<float4> _renderTexture2;
+
+int2 _renderRes;
+int _toRight;
+
+[numthreads(8,8,1)]
+void SquashHoriz(uint3 id : SV_DispatchThreadID) 
+{
+    // should run with x threads half total x res
+    int2 tgtRenderXY = (int2)id.xy;
+    int2 halfRenderRes = _renderRes >> 1;
+    if((int)tgtRenderXY.x < halfRenderRes.x && tgtRenderXY.y < _renderRes.y) {
+        int2 srcRenderXY = float2(tgtRenderXY.x << 1, tgtRenderXY.y);
+        if(_toRight) {
+            tgtRenderXY.x += halfRenderRes.x;
+        }
+        _renderTexture[tgtRenderXY] = (_renderTexture2[srcRenderXY] + _renderTexture2[srcRenderXY + float2(1, 0)]) / 2;
+    }
+}
+
+// [numthreads(8,8,1)]
+// void TwoIntoOne(uint3 id : SV_DispatchThreadID) 
+// {
+//     // should run with x threads half total x res
+//     int2 srcRenderXY = (int2)id.xy;
+//     int2 halfRenderRes = _renderRes >> 1;
+//     if((int)srcRenderXY.x < halfRenderRes.x && srcRenderXY.y < _renderRes.y) {
+//         int2 tgtRenderXY = srcRenderXY + int2(halfRenderRes.x, 0);
+//         _renderTexture[tgtRenderXY] = _renderTexture2[srcRenderXY];
+//     }
+// } 

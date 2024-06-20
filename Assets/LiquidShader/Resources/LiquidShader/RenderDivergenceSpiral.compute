@@ -1,0 +1,72 @@
+// ReSharper disable CppLocalVariableMayBeConst
+#pragma kernel Render
+#pragma kernel UpdateDivergenceTexPos
+
+#define Buf RWStructuredBuffer
+
+float _spiralRadius;
+float _rotationSpeed;
+float _radialSpeed;
+bool _renderPositive;
+bool _renderNegative;
+
+Texture2D<float4> _waterTexture;
+SamplerState sampler_waterTexture;
+RWTexture2D<float4> _renderTexture;
+Buf<float2> _texPosBase;
+int _divergenceTexPosOffset;
+Buf<float> _divergence;
+
+int2 _simRes;
+int2 _renderRes;
+float _deltaTime;
+
+[numthreads(8,8,1)]
+void UpdateDivergenceTexPos (uint3 id : SV_DispatchThreadID) {
+    int2 cellId = id.xy;
+    if(cellId.x >= _simRes.x || cellId.y >= _simRes.y) return;
+    const int cellOffset = cellId.x * _simRes.y + cellId.y;
+    const float divergence = _divergence[cellOffset];
+    const float divIncr = _deltaTime * divergence / 20;
+    _texPosBase[_divergenceTexPosOffset + cellOffset] -= float2(divIncr * _rotationSpeed, divIncr * _radialSpeed);
+}
+
+[numthreads(8,8,1)]
+void Render (uint3 id : SV_DispatchThreadID)
+{
+    int2 renderXY = (int2)id;
+    if(renderXY.x >= _renderRes.x || renderXY.y >= _renderRes.y) return;
+    float2 _cellSize = (float2)_renderRes / (float2)_simRes;
+    int2 cellId = (int2)(id.xy / _cellSize);
+    const int cellOffset = cellId.x * _simRes.y + cellId.y;
+    const float divergence = min(1, max(-1, _divergence[cellOffset]));
+
+    const float2 cellCenter = (cellId + 0.5) * _cellSize;
+    float2 velFromCenter = id.xy - cellCenter;
+
+    const float v_len = length(velFromCenter);
+    float radiusAbs = _spiralRadius * _cellSize.y * 0.5 * abs(divergence);
+    // radiusAbs = _cellSize.y * 2; // debug
+    if(v_len > radiusAbs) return;
+    float angle = acos(velFromCenter.x / v_len);
+    if(velFromCenter.y < 0) {
+        angle = 6.28319 - angle;
+    }
+
+    const float2 uv_base = float2(angle / 2 / 3.141593 * 1, v_len / _cellSize.x * 1);
+
+    const float2 uv = uv_base + (float2)_texPosBase[_divergenceTexPosOffset + cellOffset];
+    float4 sample = _waterTexture.SampleLevel(sampler_waterTexture, ((float2)uv), 0 );
+    const float radialT = v_len / radiusAbs;
+    float alpha = min(1, max(0, 1 - radialT));
+    alpha = sqrt(alpha);
+    alpha = alpha > 0.5 ? 1  : alpha;
+    // alpha *= abs(divergence);
+    if(divergence < 0) {
+        sample *= radialT;
+    } else {
+        sample /= radialT;
+    }
+    if((divergence < 0 && !_renderNegative) || (divergence > 0 && !_renderPositive)) return;
+    _renderTexture[id.xy] = (1 - alpha) * _renderTexture[id.xy] + alpha * float4(sample.xyz, 0);
+}

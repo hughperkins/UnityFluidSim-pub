@@ -1,0 +1,22 @@
+#pragma kernel FillFloats
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _tgtFloats;
+
+float _valueFloat;
+
+int _tgtOffset;
+
+int _simResX;
+int _simResY;
+
+[numthreads(8,8,1)]
+void FillFloats(uint3 id : SV_DispatchThreadID) 
+{
+    int2 pos = (uint2)(id.xy);
+    if(pos.x < _simResX && pos.y < _simResY) {
+        int simOffset = pos.x * _simResY + pos.y;
+        _tgtFloats[_tgtOffset + simOffset] = _valueFloat;;
+    }
+}

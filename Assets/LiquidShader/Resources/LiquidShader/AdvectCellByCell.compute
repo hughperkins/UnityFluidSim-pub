@@ -1,0 +1,154 @@
+#pragma kernel AdvectVelocityFromCenter
+#pragma kernel AdvectVelocityFromCenterDoubleBuffered
+#pragma kernel AdvectVelocityFromCenterDoubleBufferedRemoveSrcVel
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+
+Buf<float> _newHorizVel;
+Buf<float> _newVertVel;
+
+Buf<int> _isFluid;
+
+int _simResX;
+int _simResY;
+
+int _updateX;
+int _updateY;
+
+float _speedDeltaTime;
+
+Buf<float3> _debug;
+
+#include "positions.cginc"
+#include "interpolate.cginc"
+
+#define CreateShareOverCells(Name, Prev, Next) \
+void shareOverCells##Name(Buf<float> src, Buf<float> tgt, float2 tgtPosF, float value) { \
+    int2 tgtPos2i; \
+    float2 lambdaF; \
+    posfToPosiLambda(tgtPosF, tgtPos2i, lambdaF); \
+    /* share over the square of 4 adjacent cells */ \
+    bool has_top = tgtPos2i.y >= -1 && tgtPos2i.y < _simResY - 1; \
+    bool has_bottom = tgtPos2i.y >= 0 && tgtPos2i.y < _simResY; \
+    bool has_left = tgtPos2i.x >= 0 && tgtPos2i.x < _simResX; \
+    bool has_right = tgtPos2i.x >= -1 && tgtPos2i.x < _simResX - 1; \
+ \
+    float top = value * lambdaF.y; \
+    float bottom = value * (1 - lambdaF.y); \
+    float top_left = top * (1 - lambdaF.x); \
+    float top_right = top * lambdaF.x; \
+    float bottom_left = bottom * (1 - lambdaF.x); \
+    float bottom_right = bottom * lambdaF.x; \
+ \
+    /* offset2 refers to bottom_left */ \
+    int offset2 = posiToIdx(tgtPos2i); \
+ \
+    bool has_top_left = has_top && has_left && _isFluid[U(offset2)] == 1 && _isFluid[Prev(U(offset2))] == 1; \
+    bool has_top_right = has_top && has_right && _isFluid[R(U(offset2))] == 1 && _isFluid[Prev(R(U(offset2)))] == 1; \
+    bool has_bottom_left = has_bottom && has_left && _isFluid[offset2] == 1 && _isFluid[Prev(offset2)] == 1; \
+    bool has_bottom_right = has_bottom && has_right && _isFluid[R(offset2)] == 1 && _isFluid[Prev(R(offset2))] == 1; \
+ \
+    if(has_bottom_left) tgt[offset2] = src[offset2] + bottom_left; \
+    if(has_bottom_right) tgt[R(offset2)] = src[R(offset2)] + bottom_right; \
+    if(has_top_left) tgt[U(offset2)] = src[U(offset2)] + top_left; \
+    if(has_top_right) tgt[R(U(offset2))] = src[R(U(offset2))] + top_right; \
+}
+
+
+int prevU(int pos) {
+    return L(pos);
+}
+int prevV(int pos) {
+    return D(pos);
+}
+int nextU(int pos) {
+    return R(pos);
+}
+int nextV(int pos) {
+    return U(pos);
+}
+
+CreateShareOverCells(U, prevU, nextU)
+CreateShareOverCells(V, prevV, nextV)
+
+void AdvectVelocityFromCellU(
+    int2 pos1, int offset1, Buf<float> u, Buf<float> v, Buf<int>s
+) {
+    if(pos1.y < _simResY - 1 && pos1.x < _simResX - 1) {
+        float2 vel1 = interpolateVelocityLeft(u, v, pos1, offset1);
+        float2 pos2f = pos1 + vel1 * _speedDeltaTime;
+        float uVelocityToAdvect = u[offset1];
+        shareOverCellsU(u, u, pos2f, uVelocityToAdvect);
+    }
+}
+
+void AdvectVelocityFromCellV(
+    int2 pos1, int offset1, Buf<float> u, Buf<float> v, Buf<int>s
+) {
+    if(pos1.y < _simResY - 1 && pos1.x < _simResX - 1) {
+        float2 vel1 = interpolateVelocityBottom(u, v, pos1, offset1);
+        float2 pos2f = pos1 + vel1 * _speedDeltaTime;
+        float vVelocityToAdvect = v[offset1];
+        shareOverCellsV(v, v, pos2f, vVelocityToAdvect);
+    }
+}
+
+// [numthreads(1,1,1)]
+// void AdvectVelocityToCell(uint3 id: SV_DispatchThreadID) {
+//     int2 pos = int2(_updateX, _updateY);
+//     if(pos.x < _simResX && pos.y < _simResY) {
+//         int offset = posiToOffset(pos);
+//         AdvectVelocityToCellU(pos, offset, _u, _v, _s);
+//         AdvectVelocityToCellV(pos, offset, _u, _v, _s);
+//     }
+// }
+
+[numthreads(1,1,1)]
+void AdvectVelocityFromCenter(uint3 id: SV_DispatchThreadID) {
+    int2 pos1 = int2(_updateX, _updateY);
+    if(pos1.x < _simResX && pos1.y < _simResY) {
+        int offset1 = posiToIdx(pos1);
+        float2 vel1 = getCellCenterVelocity(_horizVel, _vertVel, pos1, offset1);
+        float2 pos2f = pos1 + vel1 * _speedDeltaTime;
+
+        // need to offset by 0.5, since the boundaries are not in the cell center
+        // when we do shareOverCells, the coordinate system is shifted 0.5 to left for u,
+        // or 0.5 downwards for v, so we need to offset in the opposite direction by the same
+        // amount
+        shareOverCellsU(_horizVel, _horizVel, pos2f + float2(0.5, 0), vel1.x);
+        shareOverCellsV(_vertVel, _vertVel, pos2f + float2(0, 0.5), vel1.y);
+    }
+}
+
+[numthreads(1,1,1)]
+void AdvectVelocityFromCenterDoubleBuffered(uint3 id: SV_DispatchThreadID) {
+    int2 pos1 = int2(_updateX, _updateY);
+    if(pos1.x < _simResX && pos1.y < _simResY) {
+        int offset1 = posiToIdx(pos1);
+        float2 vel1 = getCellCenterVelocity(_horizVel, _vertVel, pos1, offset1);
+        float2 pos2f = pos1 + vel1 * _speedDeltaTime;
+
+        shareOverCellsU(_newHorizVel, _newHorizVel, pos2f + float2(0.5, 0), vel1.x);
+        shareOverCellsV(_newVertVel, _newVertVel, pos2f + float2(0, 0.5), vel1.y);
+    }
+}
+
+[numthreads(1,1,1)]
+void AdvectVelocityFromCenterDoubleBufferedRemoveSrcVel(uint3 id: SV_DispatchThreadID) {
+    int2 pos1 = int2(_updateX, _updateY);
+    if(pos1.x < _simResX && pos1.y < _simResY) {
+        int offset1 = posiToIdx(pos1);
+        float2 vel1 = getCellCenterVelocity(_horizVel, _vertVel, pos1, offset1);
+        float2 pos2f = pos1 + vel1 * _speedDeltaTime;
+
+        _newHorizVel[offset1] -= _horizVel[offset1] / 2;
+        _newHorizVel[R(offset1)] -= _horizVel[R(offset1)] / 2;
+        _newVertVel[offset1] -= _vertVel[offset1] / 2;
+        _newVertVel[U(offset1)] -= _vertVel[U(offset1)] / 2;
+        shareOverCellsU(_newHorizVel, _newHorizVel, pos2f + float2(0.5, 0), vel1.x);
+        shareOverCellsV(_newVertVel, _newVertVel, pos2f + float2(0, 0.5), vel1.y);
+    }
+}

@@ -1,0 +1,52 @@
+#pragma kernel AdvectVelocity
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+Buf<float> _newHorizVel;
+Buf<float> _newVertVel;
+Buf<int> _isFluid;
+
+int _simResX;
+int _simResY;
+
+float _speedDeltaTime;
+
+#include "positions.cginc"
+#include "interpolate.cginc"
+
+void AdvectHorizVelocity(int2 destPos, int destIdx) {
+    if(
+        destPos.x > 0 && destPos.y > 0 && destPos.y < _simResY - 1 && destPos.x < _simResX - 1 &&
+        _isFluid[destIdx] == 1 && _isFluid[L(destIdx)] == 1
+    ) {
+        float2 destVel = interpolateVelocityLeft(_horizVel, _vertVel, destPos, destIdx);
+        float2 srcPosF = destPos - destVel * _speedDeltaTime;
+        _newHorizVel[destIdx] = interpolateFractionalPosFloat(_horizVel, srcPosF);
+    } else {
+        _newHorizVel[destIdx] = _horizVel[destIdx];
+    }
+}
+
+void AdvectVertVelocity(int2 destPos, int destIdx) {
+    if(
+        destPos.x > 0 && destPos.y > 0 && destPos.y < _simResY - 1 && destPos.x < _simResX - 1 &&
+        _isFluid[destIdx] == 1 && _isFluid[D(destIdx)] == 1
+    ) {
+        float2 destVel = interpolateVelocityBottom(_horizVel, _vertVel, destPos, destIdx);
+        float2 srcPosF = destPos - destVel * _speedDeltaTime;
+        _newVertVel[destIdx] = interpolateFractionalPosFloat(_vertVel, srcPosF);
+    } else {
+        _newVertVel[destIdx] = _vertVel[destIdx];
+    }
+}
+
+[numthreads(8,8,1)]
+void AdvectVelocity(uint3 id: SV_DispatchThreadID) {
+    int2 destPos = (int2)(id.xy);
+    if(destPos.x >= _simResX || destPos.y >= _simResY) return;
+    int destIdx = posiToIdx(destPos);
+    AdvectHorizVelocity(destPos, destIdx);
+    AdvectVertVelocity(destPos, destIdx);
+}

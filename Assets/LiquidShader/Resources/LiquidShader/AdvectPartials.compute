@@ -1,0 +1,70 @@
+#pragma kernel AdvectVelocity
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+Buf<float> _newHorizVel;
+Buf<float> _newVertVel;
+
+Buf<int> _isFluid;
+
+Buf<float3> _debug;
+
+int _simResX;
+int _simResY;
+
+float _speedDeltaTime;
+
+#include "positions.cginc"
+#include "ShaderUtils.cginc"
+#include "interpolate.cginc"
+
+void AdvectVelocityU(
+    int2 pos2, int offset2,
+    Buf<float>_newHorizVel, Buf<float> _horizVel, Buf<float> _vertVel,
+    Buf<int>_isFluid
+) {
+    if(pos2.x > 0 && pos2.y > 0 && pos2.y < _simResY - 1 && pos2.x < _simResX - 1 && _isFluid[offset2] == 1 && _isFluid[L(offset2)] == 1) { 
+        float2 vel_origin = interpolateVelocityLeftNoBoundsCheck(_horizVel, _vertVel, offset2);
+        float2 vel_right = interpolateVelocityLeftNoBoundsCheck(_horizVel, _vertVel, R(offset2));
+        float2 vel_left = interpolateVelocityLeftNoBoundsCheck(_horizVel, _vertVel, L(offset2));
+        float2 vel_up = interpolateVelocityLeftNoBoundsCheck(_horizVel, _vertVel, U(offset2));
+        float2 vel_down = interpolateVelocityLeftNoBoundsCheck(_horizVel, _vertVel, D(offset2));
+        float du_dx = (vel_right.x - vel_left.x) / 2;
+        float du_dy = (vel_up.y - vel_down.y) / 2;
+        float u_du_dx = vel_origin.x * du_dx;
+        _debug[offset2] = float3(u_du_dx, -u_du_dx, 0);
+        // _debug[offset2] = float3(vel_origin.x, -vel_origin.x, 0);
+        _newHorizVel[offset2] = _horizVel[offset2] - (vel_origin.x * du_dx - vel_origin.y * du_dy) * _speedDeltaTime;
+        // float2 pos1f = pos2 - vel2 * _speedDeltaTime;
+        // new_u[offset2] = interpolateFractionalPosFloat(u, pos1f);
+        // new_u[offset2] = u[offset2];
+    } else {
+        _newHorizVel[offset2] = _horizVel[offset2];
+    }
+}
+
+void AdvectVelocityV(
+    int2 pos2, int offset2,
+    Buf<float>_newVertVel, Buf<float> _vertVel, Buf<float> _horizVel,
+    Buf<int>_isFluid
+) {
+    // if(pos2.x > 0 && pos2.y > 0 && pos2.y < _simResY - 1 && pos2.x < _simResX - 1 && s[offset2] == 1 && s[D(offset2)] == 1) {
+    //     float2 vel2 = interpolateVelocityBottom(u, v, pos2, offset2);
+    //     float2 pos1f = pos2 - vel2 * _speedDeltaTime;
+    //     new_v[offset2] = interpolateFractionalPosFloat(v, pos1f);
+    // } else {
+        _newVertVel[offset2] = _vertVel[offset2];
+    // }
+}
+
+[numthreads(8,8,1)]
+void AdvectVelocity(uint3 id: SV_DispatchThreadID) {
+    int2 pos = (int2)(id.xy);
+    if(pos.x < _simResX && pos.y < _simResY) {
+        int offset = posiToIdx(pos);
+        AdvectVelocityU(pos, offset, _newHorizVel, _horizVel, _vertVel, _isFluid);
+        AdvectVelocityV(pos, offset, _newVertVel, _vertVel, _horizVel, _isFluid);
+    }
+}

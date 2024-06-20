@@ -1,0 +1,98 @@
+/*
+Based on position and time/frame, add noise to a float buffer
+Only touch cells with s == 1
+*/
+
+// ReSharper disable CppInconsistentNaming
+#pragma kernel AddNoiseFloats
+#pragma kernel AddNoiseFloat4s
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _tgt;
+Buf<float4> _tgtFloat4s;
+
+Buf<int> _isFluid;
+
+int _simResX;
+int _simResY;
+
+int _frame;
+int _seed;
+float _noiseAmount;
+bool _addNoise;
+float _decay;
+bool _sqrtNoise;
+
+#include "positions.cginc"
+#include "ShaderUtils.cginc"
+
+[numthreads(8,8,1)]
+void AddNoiseFloats(uint3 id: SV_DispatchThreadID) {
+    if(_noiseAmount == 0) {
+        return;
+    }
+    int2 pos = (int2)(id.xy);
+    if(pos.x > 0 && pos.y > 0 && pos.x < _simResX - 1 && pos.y < _simResY - 1) {
+        int offset = posiToIdx(pos);
+        if(_isFluid[D(offset)] == 1 && _isFluid[offset] == 1) {
+            float rand_v = rand(float2((float)pos.x / (float)_simResX, (float)pos.y / (float)_simResY) + 0.01 + frac(_frame / 100.0) / 5.0 + frac(_seed / 100.0) / 5.0);
+            rand_v -= 0.5;
+            // tgt[offset] *= 1 + (rand_v * noiseAmount);
+            float noise = rand_v * _noiseAmount;
+            // tgt[offset] *= 1 + noise;
+
+            // tgt[offset] = min(1, max(-1, tgt[offset] + noise));
+            _tgt[offset] = _tgt[offset] + noise;
+            /*
+            y = (1 + a)x
+            x = y / (1 + a)
+            */
+            // if(noise > 0) {
+            //     rand_v -= 0.5;
+                // tgt[offset] *= (1 + noise);
+            // } else {
+                // tgt[offset] *= (1 + noise);
+            // }
+        }
+    }
+}
+
+[numthreads(8,8,1)]
+void AddNoiseFloat4s(uint3 id: SV_DispatchThreadID) {
+    if(_noiseAmount == 0) {
+        return;
+    }
+    int2 pos = (int2)(id.xy);
+    if(pos.x > 0 && pos.y > 0 && pos.x < _simResX - 1 && pos.y < _simResY - 1) {
+        int offset = posiToIdx(pos);
+        if(_isFluid[D(offset)] == 1 && _isFluid[offset] == 1) {
+            float4 rand_v = float4(
+                rand(float2((float)pos.x / (float)_simResX, (float)pos.y / (float)_simResY) + 0.01 + frac(_frame / 100.0) / 5.0 + frac(_seed / 100.0) / 5.0),
+                rand(float2((float)(pos.x + 47) / (float)_simResX, (float)pos.y / (float)_simResY) + 0.01 + frac(_frame / 100.0) / 5.0 + frac(_seed / 100.0) / 5.0),
+                rand(float2((float)(pos.x + 101) / (float)_simResX, (float)pos.y / (float)_simResY) + 0.01 + frac(_frame / 100.0) / 5.0 + frac(_seed / 100.0) / 5.0),
+                rand(float2((float)(pos.x + 137) / (float)_simResX, (float)pos.y / (float)_simResY) + 0.01 + frac(_frame / 100.0) / 5.0 + frac(_seed / 100.0) / 5.0)
+            );
+            rand_v -= 0.5;
+            float4 noise = rand_v;
+            if(_sqrtNoise) {
+                const bool sign = noise > 0;
+                noise = noise * noise;
+                noise = sign ? noise : - noise;
+            }
+            noise = noise * _noiseAmount;
+            float4 newValue = _tgtFloat4s[offset];
+            if(_addNoise) {
+                newValue = (newValue + noise);
+            } else {
+                newValue = newValue * (1 + noise);
+            }
+            // if(_decaySquared) {
+                // newValue = newValue - _decay * newValue;
+            // } else {
+            newValue = (1 - _decay) * newValue;
+            // }
+            _tgtFloat4s[offset] = newValue;
+        }
+    }
+}

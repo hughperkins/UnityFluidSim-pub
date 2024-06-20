@@ -1,0 +1,34 @@
+#pragma kernel CalcDivergence
+
+// ReSharper disable once CppInconsistentNaming
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+
+Buf<int> _isFluid;
+Buf<float> _divergence;
+
+int _simResX;
+int _simResY;
+
+#include "positions.cginc"
+
+[numthreads(8,8,1)]
+void CalcDivergence(uint3 id: SV_DispatchThreadID) {
+    int2 pos = (int2)(id.xy);
+    if(pos.x >= _simResX || pos.y >= _simResY) return;
+
+    float divergence = 0;
+
+    int idx = posiToIdx(pos);
+    if(_isFluid[idx] == 1) {
+        float horizVelRight = pos.x < _simResX - 1 ? _horizVel[RIGHT(idx)] : 0;
+        float vertVelUp     = pos.y < _simResY - 1 ? _vertVel [   UP(idx)] : 0;
+        divergence =
+            - _horizVel[idx] + horizVelRight
+            - _vertVel [idx] + vertVelUp;
+    }
+
+    _divergence[idx] = divergence;
+}

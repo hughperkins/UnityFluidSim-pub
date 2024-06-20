@@ -1,0 +1,170 @@
+/*
+*/
+#pragma kernel DrawFloat4
+#pragma kernel DrawFloat
+#pragma kernel DrawVelU
+#pragma kernel DrawVelV
+#pragma kernel DrawInt
+
+#define Buf RWStructuredBuffer
+
+Buf<int> _isFluid;
+Buf<float4> _tgtFloat4;
+Buf<float> _tgtFloat;
+Buf<int> _tgtInt;
+
+float4 _drawColor;
+float _drawFloatValue;
+int _drawIntValue;
+float2 _tgtPos;
+float _drawRadius;
+bool _drawPersistVel;
+
+int _simResX;
+int _simResY;
+
+float _colorDrawLambda;
+
+#define _SimResX _simResX
+#define _SimResY _simResY
+
+#include "positions.cginc"
+
+float4 mixColor(float4 cur, const float4 col, const float lambda) {
+    // cur = min(col, cur + speed * col);
+    cur = (1 - lambda) * cur + lambda * col;
+    return cur;
+}
+
+float mixFloat(float cur, const float col, float lambda) {
+    cur = (1 - lambda) * cur + lambda * col;
+    return cur;
+}
+
+[numthreads(8,8,1)]
+void DrawFloat4(uint3 id : SV_DispatchThreadID)
+{
+    /*
+    Takes in a float4, and a position, and draws that color at that position,
+    within a radius radius
+
+    Each thread handles updating its own pixel in tgt
+
+    Only draws where s == 1
+
+    Inputs:
+    - Buf<float4> tgtFloat4
+    - int2 tgtPos
+    - int SimResX
+    - int SimResY
+    - float drawRadius
+    - float4 drawColor
+    - Buf<int> s
+    - float colorAddSpeed
+
+    Outputs:
+    - Buf<float4> tgt
+    */
+    int2 pos = (int2)id;
+    if(pos.x < _simResX && pos.y < _simResY) {
+        int offset = pos.x * _simResY + pos.y;
+        if(_isFluid[offset] == 1) {
+            if(length(pos - _tgtPos) <= _drawRadius) {
+                _tgtFloat4[offset] = mixColor(_tgtFloat4[offset], _drawColor, _colorDrawLambda);
+            }
+        }
+    }
+}
+
+
+[numthreads(8,8,1)]
+void DrawFloat(uint3 id : SV_DispatchThreadID)
+{
+    /*
+    Takes in a float4, and a position, and draws that color at that position,
+    within a radius radius
+
+    Each thread handles updating its own pixel in tgt
+
+    Only draws where s == 1
+
+    Inputs:
+    - Buf<float> tgtFloat
+    - int2 tgtPos
+    - int SimResX
+    - int SimResY
+    - float drawRadius
+    - float drawFloatValue
+    - Buf<int> s
+    - float colorAddSpeed
+
+    Outputs:
+    - Buf<float4> tgt
+    */
+    int2 pos = (int2)id;
+    if(pos.x > 0 && pos.y > 0 && pos.x < _simResX && pos.y < _simResY) {
+        int offset = pos.x * _simResY + pos.y;
+        if(_isFluid[offset] == 1) {
+            if(length(pos - _tgtPos) <= _drawRadius) {
+                _tgtFloat[offset] = mixFloat(_tgtFloat[offset], _drawFloatValue, _colorDrawLambda);
+            }
+        }
+    }
+}
+
+[numthreads(8,8,1)]
+void DrawVelU(uint3 id : SV_DispatchThreadID)
+{
+    int2 pos = (int2)id;
+    if(pos.x > 0 && pos.y > 0 && pos.x < _simResX && pos.y < _simResY) {
+        int offset = pos.x * _simResY + pos.y;
+        if(!_drawPersistVel && !(_isFluid[offset] && _isFluid[L(offset)])) return;
+        if(length(pos - _tgtPos) > _drawRadius) return;
+        _tgtFloat[offset] = mixFloat(_tgtFloat[offset], _drawFloatValue, _colorDrawLambda);
+        // if(_drawPersistVel) _isFluid[offset] = 0;
+    }
+}
+
+[numthreads(8,8,1)]
+void DrawVelV(uint3 id : SV_DispatchThreadID)
+{
+    int2 pos = (int2)id;
+    if(pos.x > 0 && pos.y > 0 && pos.x < _simResX && pos.y < _simResY) {
+        int offset = pos.x * _simResY + pos.y;
+        // if(_isFluid[offset] == 1 && _isFluid[D(offset)] == 1) {
+        //     if(length(pos - _tgtPos) <= _drawRadius) {
+        if(!_drawPersistVel && !(_isFluid[offset] && _isFluid[D(offset)])) return;
+        if(length(pos - _tgtPos) > _drawRadius) return;
+        _tgtFloat[offset] = mixFloat(_tgtFloat[offset], _drawFloatValue, _colorDrawLambda);
+    }
+}
+
+[numthreads(8,8,1)]
+void DrawInt(uint3 id : SV_DispatchThreadID)
+{
+    /*
+    Takes in a float4, and a position, and draws that color at that position,
+    within a radius radius
+
+    Each thread handles updating its own pixel in tgt
+
+    ignores s (since designed mostly to draw in s...)
+
+    Inputs:
+    - int2 tgtPos
+    - int SimResX
+    - int SimResY
+    - float drawRadius
+    - int drawIntValue
+
+    Outputs:
+    - Buf<int> tgtInt
+    */
+    int2 pos = (int2)id;
+    if(pos.x > 0 && pos.y > 0 && pos.x < _simResX - 1 && pos.y < _simResY - 1) {
+        int offset = pos.x * _simResY + pos.y;
+        if(length(pos - _tgtPos) <= _drawRadius) {
+            _tgtInt[offset] = _drawIntValue;
+        }
+    }
+}

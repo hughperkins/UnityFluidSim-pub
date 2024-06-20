@@ -1,0 +1,66 @@
+#pragma kernel ProjectGaussSeidelGeneral
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+
+Buf<int> _isFluid;
+Buf<float> _divergence;
+Buf<float> _divergenceChunks;
+
+Buf<float3> _debug;
+
+int2 _passOffset;
+
+int _simResX;
+int _simResY;
+
+int _useDivergenceChunks;
+int _divergenceChunkSizeLog2;
+
+int _saveDivergence;
+
+#include "positions.cginc"
+
+[numthreads(8,8,1)]
+void ProjectGaussSeidelGeneral(uint3 id: SV_DispatchThreadID) {
+    int2 pos = (int2)(id.xy);
+
+    pos = (pos << 1) + _passOffset;
+
+    if(pos.x >= _simResX || pos.y >= _simResY) {
+        return;
+    }
+
+    int2 simRes = int2(_simResX, _simResY);
+    int offset = pos.x * _simResY + pos.y;
+
+    if(_useDivergenceChunks) {
+        int2 chunkPos = pos >> _divergenceChunkSizeLog2;
+        int2 chunkRes = simRes >> _divergenceChunkSizeLog2;
+        int chunkOffset = chunkPos.x * chunkRes.y + chunkPos.y;
+        float div = _divergenceChunks[chunkOffset];
+        if(div == 0) {
+            return;
+        }
+    }
+
+    float divergence = 0;
+    if(pos.x > 0 && pos.y > 0 && pos.x < _simResX - 1 && pos.y < _simResY - 1) {
+        if(_isFluid[offset] == 1) {
+            int s_sum = _isFluid[L(offset)] + _isFluid[R(offset)] + _isFluid[U(offset)] + _isFluid[D(offset)];
+            if(s_sum > 0) {
+                divergence = - _horizVel[offset] + _horizVel[R(offset)] - _vertVel[offset] + _vertVel[U(offset)];
+                float correction = divergence / s_sum;
+                if (_isFluid[L(offset)]) _horizVel[offset] += correction;
+                if (_isFluid[R(offset)]) _horizVel[R(offset)] -= correction;
+                if (_isFluid[D(offset)]) _vertVel[offset] += correction;
+                if (_isFluid[U(offset)]) _vertVel[U(offset)] -= correction;
+            }
+        }
+    }
+    if(_saveDivergence) {
+        _divergence[offset] = divergence;
+    }
+}

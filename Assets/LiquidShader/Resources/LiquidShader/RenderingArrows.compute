@@ -1,0 +1,160 @@
+
+// ReSharper disable CppInitializedValueIsAlwaysRewritten
+#pragma kernel RenderArrows
+#pragma kernel RenderStaggeredArrows
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+Buf<float3> _debug;
+
+RWTexture2D<float4> _renderTexture;
+
+int2 _simRes;
+int2 _renderRes;
+
+float _arrowPushPullLambda;
+float _speedDeltaTime;
+bool _arrowsForU;
+bool _arrowsForV;
+
+#define _simResX _simRes.x
+#define _simResY _simRes.y
+
+#include "positions.cginc"
+#include "interpolate.cginc"
+
+[numthreads(8,8,1)]
+void RenderArrows(uint3 id : SV_DispatchThreadID)
+{
+    uint2 simXY = id.xy;
+
+    float2 cellSize = (float2)_renderRes / (float2)_simRes;
+    uint2 renderXY = simXY * _renderRes / _simRes;
+    uint simOffset = simXY.x * _simRes.y + simXY.y;
+    if((int)(simXY.x) >= _simRes.x - 1 || (int)(simXY.y) >= _simRes.y - 1) {
+        return;
+    }
+    float2 vel = float2(0, 0);
+    if(_arrowsForU) {
+        vel = interpolateVelocityLeft(_horizVel, _vertVel, simXY, simOffset);
+        renderXY -= int2((int)(0.5 * cellSize), 0);
+    }else if(_arrowsForV) {
+        vel = interpolateVelocityBottom(_horizVel, _vertVel, simXY, simOffset);
+        renderXY -= int2(0, (int)(0.5 * cellSize) );
+    } else {
+        float uf = (_horizVel[simOffset] + _horizVel[RIGHT(simOffset)]) * 0.5;
+        float vf = (_vertVel[simOffset] + _vertVel[UP(simOffset)]) * 0.5;
+        vel = float2(uf, vf);
+    }
+
+    vel *= _speedDeltaTime;
+    float scale = 1;
+    if(length(vel) < 0.5) {
+        scale = length(vel) * 2;
+    } else {
+        scale = 1;
+    }
+
+    renderXY -= (int2)(vel * cellSize * _arrowPushPullLambda);
+    float2x2 rot2_90 = {0.0, 1.0, -1.0, 0.0};
+    float2 vel90 = normalize(mul(rot2_90, vel));
+    float3 col = float3(1, 1, 1);
+    int i, j;
+    int2 renderPos;
+    for(i = 0; i < 200 - 30; i++) {
+        for(j = -5; j < 5; j++) {
+            renderPos = (int2)(
+                (float2)renderXY +
+                cellSize * 0.5 +
+                cellSize * vel * (float)i / 200 +
+                cellSize * vel90 * (float)j / 96 * scale
+            );
+            _renderTexture[renderPos] = float4(col, 0);
+        }
+    }
+    for(i = 0; i < 60; i++) {
+        for(j=-i >> 1; j < i >> 1; j++) {
+            int iPlot = 200 - i;
+            int jPlot = j;
+            renderPos = (int2)(
+                (float2)renderXY +
+                cellSize * 0.5 +
+                cellSize * vel * (float)iPlot / 200 +
+                cellSize * vel90 * (float)jPlot / 200 * scale
+            );
+            _renderTexture[renderPos] = float4(col, 0);
+        }
+    }
+}
+
+void DrawArrow(float2 renderXY, float2 vel) {
+    const float2 cellSize = (float2)_renderRes / (float2)_simRes;
+
+    vel *= _speedDeltaTime;
+    float scale = 1;
+    if(length(vel) < 0.5) {
+        scale = length(vel) * 2;
+    } else {
+        scale = 1;
+    }
+
+    float2 velDir = normalize(vel) * 0.3;
+
+    renderXY -= (int2)(velDir * cellSize * 0.5);
+
+    const float2x2 rot2_90 = {0.0, 1.0, -1.0, 0.0};
+    const float2 vel90 = normalize(mul(rot2_90, vel));
+    float3 col = float3(1, 1, 1);
+    int i, j;
+    int2 renderPos;
+    for(i = 0; i < 200 - 30; i++) {
+        for(j = -5; j < 5; j++) {
+            renderPos = (int2)(
+                (float2)renderXY +
+                cellSize * 0.5 +
+                cellSize * velDir * (float)i / 200 +
+                cellSize * vel90 * (float)j / 96 * scale
+            );
+            _renderTexture[renderPos] = float4(col, 0);
+        }
+    }
+    for(i = 0; i < 60; i++) {
+        for(j=-i >> 1; j < i >> 1; j++) {
+            const int iPlot = 200 - i;
+            const int jPlot = j;
+            renderPos = (int2)(
+                (float2)renderXY +
+                cellSize * 0.5 +
+                cellSize * velDir * (float)iPlot / 200 +
+                cellSize * vel90 * (float)jPlot / 200 * scale
+            );
+            _renderTexture[renderPos] = float4(col, 0);
+        }
+    }
+}
+
+[numthreads(8,8,1)]
+void RenderStaggeredArrows(uint3 id : SV_DispatchThreadID)
+{
+    uint2 simXY = id.xy;
+
+    const float2 cellSize = (float2)_renderRes / (float2)_simRes;
+    const uint2 renderXY = simXY * _renderRes / _simRes;
+    const uint simOffset = simXY.x * _simRes.y + simXY.y;
+    if((int)(simXY.x) >= _simRes.x - 1 || (int)(simXY.y) >= _simRes.y - 1) {
+        return;
+    }
+    float uf = _horizVel[simOffset] * 0.5;
+    float vf = _vertVel[simOffset] * 0.5;
+
+    float2 renderUPos = renderXY - int2((int)(0.5 * cellSize), 0);
+    float2 renderVPos = renderXY - int2(0, (int)(0.5 * cellSize));
+
+    // renderUPos -= float2(uf * 0.5, 0);
+
+    DrawArrow(renderUPos, float2(uf, 0));
+    DrawArrow(renderVPos, float2(0, vf));
+    _debug[simOffset] = float3(1, 0, 0);
+}

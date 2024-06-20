@@ -1,0 +1,30 @@
+
+// ReSharper disable CppInitializedValueIsAlwaysRewritten
+#pragma kernel SetSelected
+
+#define Buf RWStructuredBuffer
+
+Buf<int> _selected;
+
+int2 _tgtPos;
+int _newVal;
+
+int2 _simRes;
+
+#define _simResX _simRes.x
+#define _simResY _simRes.y
+
+#include "positions.cginc"
+
+[numthreads(8,8,1)]
+void SetSelected(uint3 id : SV_DispatchThreadID)
+{
+    if(id.x != 0 || id.y != 0) return;
+    int offset = posiToIdx(_tgtPos);
+    if(_newVal < 0) {
+        _selected[offset] = 1 - _selected[offset];
+    } else {
+        _selected[offset] = _newVal;
+    }
+    // _selected[offset] = 1;
+}

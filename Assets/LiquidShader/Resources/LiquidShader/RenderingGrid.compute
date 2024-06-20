@@ -1,0 +1,208 @@
+
+// ReSharper disable CppInitializedValueIsAlwaysRewritten
+#pragma kernel RenderGridView
+#pragma kernel UpdateTexPos
+#pragma kernel RenderCurrentCell
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+Buf<float2> _texPos; // // [resX, resY, [0 for u value 1 for v value]]
+Buf<float3> _debug;
+Texture2D<float4> _waterTexture;
+SamplerState sampler_waterTexture;
+RWTexture2D<float4> _renderTexture;
+
+int2 _simRes;
+int2 _renderRes;
+
+float _time;
+float _deltaTime;
+
+
+float3 _currentCellColor;
+
+float _gridBoundarySpeed;
+float _gridBoundaryThickness;
+float _gridBoundaryFrequency;
+
+bool _renderStaticTexture;
+bool _renderRandomTexture;
+bool _renderWaves;
+bool _renderSolidColor;
+
+int _updateX;
+int _updateY;
+
+#define _simResX _simRes.x
+#define _simResY _simRes.y
+
+#define renderResX (_renderRes.x)
+#define renderResY (_renderRes.y)
+
+#include "ShaderUtils.cginc"
+
+void RenderGridViewWaves(uint3 id) {
+    uint2 renderXY = id.xy;
+    float2 simPosF = (float2)renderXY * _simRes / _renderRes + _gridBoundaryThickness * 0.5;
+    // int2 simXY = renderXY * _simRes / _renderRes;
+    int2 simXY = (int2)simPosF;
+    // simXYf += 0.15;
+    // int2 simXY = (int2)simXYf;
+    uint simOffset = simXY.x * _simRes.y + simXY.y;
+    float uf = min(1, max(-1, _horizVel[simOffset]));
+    float vf = min(1, max(-1, _vertVel[simOffset]));
+    // float2 vel = float2(uf, vf);
+    float2 subT = frac(simPosF);
+    // if((subT.x > 0.3 && subT.y > 0.3) || subT.x < 0.3 || subT.y < 0.3) {
+    if((subT.x > _gridBoundaryThickness && subT.y > _gridBoundaryThickness)) {
+        return;
+    }
+    // float2
+    // float3 col = float3( (float2)simXY / (float2)_simRes, 0);
+    // float val = _floatsToRender[simOffset];
+    // float3 floatCol = val > 0 ? float3(0, val, 0) : float3(-val, 0, 0);
+    // float3 col = floatCol;
+    float3 col = float3(0, 0, 0);
+    // float3 uCol = uf > 0 ? float3(0, uf, 0) : float3(-uf, 0, 0);
+    float3 uCol = float3(0, 0.2, 1);
+    // float3 vCol = vf > 0 ? float3(0, vf, 0) : float3(-vf, 0, 0);
+    float3 vCol = float3(0, 0.4, 1);
+    // float uBlackness = sin(_time * uf * 70 - subT.x * 30) * 0.5 + 0.5;
+    float uBlackness = (int)((frac(_time * uf * _gridBoundarySpeed - subT.x * _gridBoundaryFrequency) * 2 ));
+    // float uBlackness = (int)((frac(_time * uf * 70 - subT.x * 30) * 0.5 + 0.5) * 2) >> 1;
+    // float vBlackness = sin(_time * vf * 70 - subT.y * 30) * 0.5 + 0.5;
+    float vBlackness = (int)((frac(_time * vf * _gridBoundarySpeed - subT.y * _gridBoundaryFrequency) * 2 ));
+    // if(abs(uf) > 0.01) {
+    uCol *= uBlackness * abs(uf);
+    vCol *= vBlackness * abs(vf);
+    // }
+    col = subT.y > _gridBoundaryThickness && subT.x < _gridBoundaryThickness ?
+        uCol :
+        subT.x > _gridBoundaryThickness && subT.y < _gridBoundaryThickness ? vCol : col;
+    // float3 col = min(subT.x, subT.y) < 0.2 ? float3(0, 0, 0) : float3( (float2)simXY / (float2)_simRes, 0);
+    _renderTexture[renderXY] = float4(col, 0);
+}
+
+void RenderGridSolidColor(uint3 id) {
+    uint2 renderXY = id.xy;
+    float2 simPosF = (float2)renderXY * _simRes / _renderRes + _gridBoundaryThickness * 0.5;
+    int2 simXY = (int2)simPosF;
+    // uint simOffset = simXY.x * _simRes.y + simXY.y;
+    // float uf = min(1, max(-1, _horizVel[simOffset]));
+    // float vf = min(1, max(-1, _vertVel[simOffset]));
+    float2 subT = frac(simPosF);
+    if((subT.x > _gridBoundaryThickness && subT.y > _gridBoundaryThickness)) {
+        return;
+    }
+    float3 col = float3(0, 0, 0);
+    float3 uCol = float3(0, 0.2, 1);
+    float3 vCol = float3(0, 0.2, 1);
+    // float uBlackness = (int)((frac(_time * uf * _gridBoundarySpeed - subT.x * _gridBoundaryFrequency) * 2 ));
+    // float vBlackness = (int)((frac(_time * vf * _gridBoundarySpeed - subT.y * _gridBoundaryFrequency) * 2 ));
+    // uCol *= uBlackness * abs(uf);
+    // vCol *= vBlackness * abs(vf);
+    col = subT.x < _gridBoundaryThickness ?
+        uCol :
+        subT.x > _gridBoundaryThickness && subT.y < _gridBoundaryThickness ? vCol : col;
+    // float3 col = min(subT.x, subT.y) < 0.2 ? float3(0, 0, 0) : float3( (float2)simXY / (float2)_simRes, 0);
+    _renderTexture[renderXY] = float4(col, 0);
+}
+
+[numthreads(8,8,1)]
+void UpdateTexPos (uint3 id : SV_DispatchThreadID) {
+    int2 simXY = (int2)id.xy;
+    if(simXY.x >= _simRes.x || simXY.y >= _simRes.y) return;
+    const uint simOffset = simXY.x * _simRes.y + simXY.y;
+    float uf = _horizVel[simOffset];
+    float vf = _vertVel[simOffset];
+    _texPos[simOffset] -= 200 * _deltaTime * float2(uf, vf);
+}
+
+void RenderGridViewRandomTexture(uint3 id) {
+    uint2 renderXY = id.xy;
+    float2 simPosF = (float2)renderXY * _simRes / _renderRes + _gridBoundaryThickness * 0.5;
+    int2 simXY = (int2)simPosF;
+    const uint simOffset = simXY.x * _simRes.y + simXY.y;
+    float uf = min(1, max(-1, _horizVel[simOffset]));
+    float vf = min(1, max(-1, _vertVel[simOffset]));
+    float2 subT = frac(simPosF);
+    if((subT.x > _gridBoundaryThickness && subT.y > _gridBoundaryThickness)) {
+        return;
+    }
+    float3 col = float3(0, 0, 0);
+    float3 uCol = float3(0, 0.2, 1);
+    float3 vCol = float3(0, 0.4, 1);
+    float2 texPos = _texPos[simOffset];
+
+    const int2 rand_in_u = id.xy + int2((int)texPos.x, 0);
+    const int2 rand_in_v = id.xy + int2(0, (int)texPos.y);
+    float r_u = rand(rand_in_u / 1920.0);
+    float r_v = rand(rand_in_v / 1920.0);
+    r_u = r_u < 0.5 ? 1 : 0;
+    r_v = r_v < 0.5 ? 1 : 0;
+    uCol *= r_u * abs(uf);
+    vCol *= r_v * abs(vf);
+
+    col = subT.y > _gridBoundaryThickness && subT.x < _gridBoundaryThickness ?
+        uCol :
+        subT.x > _gridBoundaryThickness && subT.y < _gridBoundaryThickness ? vCol : col;
+    _renderTexture[renderXY] = float4(col, 0);
+}
+
+void RenderGridViewStaticTexture(uint3 id) {
+    uint2 renderXY = id.xy;
+    if((int)renderXY.x >= renderResX || (int)renderXY.y >= renderResY) return;
+    float2 simPosF = (float2)renderXY * _simRes / _renderRes + _gridBoundaryThickness * 0.5;
+    int2 simXY = (int2)simPosF;
+    const uint simOffset = simXY.x * _simRes.y + simXY.y;
+    float2 subT = frac(simPosF);
+    if((subT.x > _gridBoundaryThickness && subT.y > _gridBoundaryThickness)) {
+        return;
+    }
+    float3 col = float3(0, 0, 0);
+    float3 uCol = float3(0, 0.2, 1);
+    float3 vCol = float3(0, 0.4, 1);
+    float2 texPos = _texPos[simOffset];
+
+    float2 u_uv = (float2)id.xy / 100.0 + int2((int)texPos.x, 0) / 100.0;
+    float2 v_uv = (float2)id.xy / 100.0 + int2(0, (int)texPos.y) / 100.0;
+
+    float4 texSampleU = _waterTexture.SampleLevel(sampler_waterTexture, u_uv, 0 );
+    float4 texSampleV = _waterTexture.SampleLevel(sampler_waterTexture, v_uv, 0 );
+    uCol = texSampleU.xyz;
+    vCol = texSampleV.xyz;
+
+    col = subT.y > _gridBoundaryThickness && subT.x < _gridBoundaryThickness ?
+        uCol :
+        subT.x > _gridBoundaryThickness && subT.y < _gridBoundaryThickness ? vCol : col;
+    _renderTexture[renderXY] = float4(col, 0);
+}
+
+[numthreads(8,8,1)]
+void RenderGridView(uint3 id : SV_DispatchThreadID) {
+    if (_renderWaves) RenderGridViewWaves(id);
+    if(_renderRandomTexture) RenderGridViewRandomTexture(id);
+    if(_renderStaticTexture) RenderGridViewStaticTexture(id);
+    if(_renderSolidColor) RenderGridSolidColor(id);
+}
+
+[numthreads(8,8,1)]
+void RenderCurrentCell(uint3 id : SV_DispatchThreadID)
+{
+    uint2 renderXY = id.xy;
+    float2 simPosF = (float2)renderXY * _simRes / _renderRes;
+    int2 simXY = (int2)simPosF;
+    if(simXY.x != _updateX || simXY.y != _updateY) {
+        return;
+    }
+    // uint simOffset = simXY.x * _simRes.y + simXY.y;
+    // float uf = min(1, max(-1, _u[simOffset]));
+    // float vf = min(1, max(-1, _v[simOffset]));
+    float2 subT = frac(simPosF);
+    if(! (subT.x < 0.1 || subT.y < 0.1 || subT.x > 0.9 || subT.y > 0.9) ) {
+        return;
+    }
+    _renderTexture[renderXY] = float4(_currentCellColor, 0);
+}

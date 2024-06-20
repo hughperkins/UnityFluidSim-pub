@@ -1,0 +1,55 @@
+#pragma kernel AdvectFloat4
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+
+Buf<float4> _srcFloat4;
+Buf<float4> _destFloat4;
+
+Buf<float3> _debug;
+
+Buf<int> _isFluid;
+
+int _simResX;
+int _simResY;
+
+float _speedDeltaTime;
+
+#define Buf RWStructuredBuffer
+
+#include "positions.cginc"
+#include "interpolate.cginc"
+
+[numthreads(8,8,1)]
+void AdvectFloat4(uint3 id: SV_DispatchThreadID) {
+    int2 pos2 = (int2)(id.xy);
+    if(pos2.x >= _simResX || pos2.y >= _simResY) return;
+
+    int offset2 = posiToIdx(pos2);
+    if(_isFluid[offset2] == 0) {
+        _destFloat4[offset2] = _srcFloat4[offset2];
+        return;
+    }
+
+    float2 vel2 = getCellCenterVelocity(_horizVel, _vertVel, pos2, offset2);
+    float2 pos1f = pos2.xy - vel2 * _speedDeltaTime;
+
+    int2 pos1i;
+    float2 lambda1;
+    posfToPosiLambda(pos1f, pos1i, lambda1);
+    int offset1 = posiToIdx(pos1i);
+    if(pos1i.x <= 0 || pos1i.y <= 0 || pos1i.x >= _simResX - 1 || pos1i.y >= _simResY - 1) {
+        _destFloat4[offset2] = 0;
+        return;
+    }
+
+    float4 v = interpolateFloat4(_srcFloat4, offset1, lambda1);
+    v = min(1, max(-1, v));
+    if(v[0] != v[0] || v[1] != v[1] || v[2] != v[2] || v[3] != v[3]) {
+        // nan
+        v = float4(0, 0,0,0);
+    }
+    _destFloat4[offset2] = v;
+}

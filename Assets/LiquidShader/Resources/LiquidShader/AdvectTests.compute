@@ -1,0 +1,76 @@
+#pragma kernel kGetCellCenterVelocity
+#pragma kernel kInterpolateVelocityLeft
+#pragma kernel kInterpolateVelocityBottom
+#pragma kernel kInterpolateFractionalPosFloat
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+Buf<float> _newHorizVel;
+Buf<float> _newVertVel;
+
+Buf<float4> _srcFloat4;
+Buf<float4> _destFloat4;
+
+Buf<float3> _debug;
+
+Buf<int> _isFluid;
+
+int _simResX;
+int _simResY;
+
+float _speedDeltaTime;
+
+#define Buf RWStructuredBuffer
+
+#include "positions.cginc"
+#include "interpolate.cginc"
+
+[numthreads(1,1,1)]
+void kInterpolateVelocityBottom(uint3 id: SV_DispatchThreadID) {
+    int2 pos = (int2)(id.xy);
+    if(pos.x < _simResX && pos.y < _simResY) {
+        int offset = posiToIdx(pos);
+        float2 vInterp = interpolateVelocityBottom(_horizVel, _vertVel, pos, offset);
+        _destFloat4[offset] = float4(vInterp, 0, 0);
+    }
+}
+
+[numthreads(1,1,1)]
+void kGetCellCenterVelocity(uint3 id: SV_DispatchThreadID) {
+    int2 pos = (int2)(id.xy);
+    if(pos.x < _simResX && pos.y < _simResY) {
+        int offset = posiToIdx(pos);
+        // destFloat3[offset] = float3((float)(pos.x), (float)(pos.y), 0);
+        _destFloat4[offset] = float4(getCellCenterVelocity(_horizVel, _vertVel, pos, offset), 0, 0);
+    }
+}
+
+[numthreads(1,1,1)]
+void kInterpolateFractionalPosFloat(uint3 id: SV_DispatchThreadID) {
+    /*
+    We need:
+    - src array (float) => map to u
+    - fractional pos (float2) => map to srcFloat4.xy
+
+    - output (float) => map to u2
+    */
+    int2 pos = (int2)(id.xy);
+    if(pos.x < _simResX && pos.y < _simResY) {
+        int offset = posiToIdx(pos);
+        float2 fracPos = _srcFloat4[offset].xy;
+        float interpolated = interpolateFractionalPosFloat(_horizVel, fracPos);
+        _newHorizVel[offset] = interpolated;
+    }
+}
+
+[numthreads(1,1,1)]
+void kInterpolateVelocityLeft(uint3 id: SV_DispatchThreadID) {
+    int2 pos = (int2)(id.xy);
+    if(pos.x < _simResX && pos.y < _simResY) {
+        int offset = posiToIdx(pos);
+        float2 uInterp = interpolateVelocityLeft(_horizVel, _vertVel, pos, offset);
+        _destFloat4[offset] = float4(uInterp, 0, 0);
+    }
+}

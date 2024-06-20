@@ -1,0 +1,32 @@
+#pragma kernel ProjectGaussSeidel
+
+#define Buf RWStructuredBuffer
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+Buf<int> _isFluid;
+
+int2 _passOffset;
+int _simResX;
+int _simResY;
+
+#include "positions.cginc"
+
+[numthreads(8,8,1)]
+void ProjectGaussSeidel(uint3 threadId: SV_DispatchThreadID) {
+    int2 pos = (threadId.xy << 1) + _passOffset;
+    if(pos.x <= 0 || pos.y <= 0 || pos.x >= _simResX - 1 || pos.y >= _simResY - 1) return;
+
+    int idx = posiToIdx(pos);
+    if(_isFluid[idx] == 0) return;
+
+    int numFluidNeighbors = _isFluid[LEFT(idx)] + _isFluid[RIGHT(idx)] + _isFluid[UP(idx)] + _isFluid[DOWN(idx)];
+    if(numFluidNeighbors == 0) return;
+
+    float divergence = - _horizVel[idx] + _horizVel[RIGHT(idx)] - _vertVel[idx] + _vertVel [UP(idx)];
+    float deltaVel = divergence / numFluidNeighbors;
+
+    if (_isFluid[ LEFT(idx)]) _horizVel[      idx ] += deltaVel;
+    if (_isFluid[RIGHT(idx)]) _horizVel[RIGHT(idx)] -= deltaVel;
+    if (_isFluid[ DOWN(idx)]) _vertVel [      idx ] += deltaVel;
+    if (_isFluid[   UP(idx)]) _vertVel [   UP(idx)] -= deltaVel;
+}

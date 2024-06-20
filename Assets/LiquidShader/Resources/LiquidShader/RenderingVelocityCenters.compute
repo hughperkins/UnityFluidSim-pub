@@ -1,0 +1,201 @@
+#pragma kernel RenderVelocity
+#pragma kernel RenderVelocityHSV
+#pragma kernel RenderMovingTexture
+#pragma kernel RenderVelU
+#pragma kernel RenderVelV
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+Buf<int> _isFluid;
+
+Buf<float2> _texPos; // // [resX, resY, [0 for u value 1 for v value]]
+Texture2D<float4> _waterTexture;
+SamplerState sampler_waterTexture;
+
+RWTexture2D<float4> _renderTexture;
+
+int2 _simRes;
+int2 _renderRes;
+bool _onlyRenderFixed;
+
+#define _simResX _simRes.x
+#define _simResY _simRes.y
+
+#include "positions.cginc"
+#include "ShaderUtils.cginc"
+
+
+[numthreads(8,8,1)]
+void RenderVelocity(uint3 id : SV_DispatchThreadID)
+{
+    uint2 renderXY = id.xy;
+    uint2 simXY = renderXY * _simRes / _renderRes;
+    if((int)simXY.x >= _simRes.x || (int)simXY.y >= _simRes.y) {
+        return;
+    }
+    uint simOffset = simXY.x * _simRes.y + simXY.y;
+    float uf = _horizVel[simOffset];
+    float vf = _vertVel[simOffset];
+    if((int)simXY.x < _simRes.x - 1) {
+        uf = (uf + _horizVel[R(simOffset)]) * 0.5;
+    }
+    if((int)simXY.x < _simRes.y - 1) {
+        vf = (vf + _vertVel[U(simOffset)]) * 0.5;
+    }
+    uf = uf * 0.5 + 0.5;
+    vf = vf * 0.5 + 0.5;
+    float vz = 1 - (uf + vf) * 0.5;
+    _renderTexture[renderXY] = float4(uf, 0.5, vf, vz);
+}
+
+[numthreads(8,8,1)]
+void RenderMovingTexture(uint3 id : SV_DispatchThreadID) {
+    const uint2 renderXY = id.xy;
+    uint2 simXY = renderXY * _simRes / _renderRes;
+    if((int)simXY.x >= _simRes.x || (int)simXY.y >= _simRes.y) {
+        return;
+    }
+    const uint simOffset = simXY.x * _simRes.y + simXY.y;
+    // float uf = _u[simOffset];
+    // float vf = _v[simOffset];
+    // if((int)simXY.x < _simRes.x - 1) {
+    //     uf = (uf + _u[R(simOffset)]) / 2;
+    // }
+    // if((int)simXY.y < _simRes.y - 1) {
+    //     vf = (vf + _v[U(simOffset)]) / 2;
+    // }
+    // float2 vel = float2(uf, vf);
+    // float v_len = length(vel);
+    // float angle = acos(vel.x / v_len); // divide by 2*pi
+    // if(vel.y < 0) {
+    //     angle = 6.28319 - angle;
+    // }
+
+    float texPosX = _texPos[simOffset].x;
+    if((int)simXY.x + 1 < _simResX) {
+        texPosX = (texPosX + _texPos[R(simOffset)].x) * 0.5;
+    }
+
+    float texPosY = _texPos[simOffset].y;
+    if((int)simXY.y + 1 < _simResY) {
+        texPosY = (texPosY + _texPos[U(simOffset)].y) * 0.5;
+    }
+
+    float2 texPos = float2(texPosX, texPosY);
+
+    // int averageOver = 1;
+    // float2 texPosSum = _texPos[simOffset];
+    // if(simXY.x + 1 < _simResX) {
+    //     averageOver += 1;
+    //     texPosSum += _texPos[R(simOffset)];
+    // }
+    // if(simXY.y + 1 < _simResY) {
+    //     averageOver += 1;
+    //     texPosSum += _texPos[U(simOffset)];
+    // }
+    // if(simXY.y + 1 < _simResY && simXY.x < _simResX) {
+    //     averageOver += 1;
+    //     texPosSum += _texPos[R(U(simOffset))];
+    // }
+    // float2 texPos = texPosSum / averageOver;
+    // float2 texPos = _texPos[simOffset];
+
+    const float2 uv = (float2)id.xy / 100.0 + int2((int)texPos.x, (int)texPos.y) / 100.0;
+
+    float4 texSample = _waterTexture.SampleLevel(sampler_waterTexture, uv, 0 );
+    float3 col = texSample.xyz;
+    _renderTexture[renderXY] = float4(col, 0);
+}
+
+[numthreads(8,8,1)]
+void RenderVelocityHSV(uint3 id : SV_DispatchThreadID)
+{
+    uint2 renderXY = id.xy;
+    uint2 simXY = renderXY * _simRes / _renderRes;
+    if((int)simXY.x >= _simRes.x || (int)simXY.y >= _simRes.y) {
+        return;
+    }
+    uint simOffset = simXY.x * _simRes.y + simXY.y;
+    if(_onlyRenderFixed && _isFluid[simOffset] == 1) return;
+    float uf = _horizVel[simOffset];
+    float vf = _vertVel[simOffset];
+    if((int)simXY.x < _simRes.x - 1) {
+        uf = (uf + _horizVel[R(simOffset)]) / 2;
+    }
+    if((int)simXY.y < _simRes.y - 1) {
+        vf = (vf + _vertVel[U(simOffset)]) / 2;
+    }
+    float2 vel = float2(uf, vf);
+    float v_len = length(vel) + 1e-6;
+    float angle = acos(vel.x / v_len);
+    if(vel.y < 0) {
+        angle = 6.28319 - angle;
+    }
+    if(v_len > 1e-6) {
+        _renderTexture[renderXY] = float4(HSVtoRGB(float3(angle * 0.159155, 1, v_len)), 0);
+    } else {
+        _renderTexture[renderXY] = float4(0, 0, 0, 0);
+    }
+}
+
+[numthreads(8,8,1)]
+void RenderVelU(uint3 id : SV_DispatchThreadID)
+{
+    /*
+    use u as source
+    */
+    int2 renderXY = id.xy;
+    int2 simXY = int2(id.x * _simResX / _renderRes.x, id.y * _simResY / _renderRes.y);
+    if((int)simXY.x >= _simRes.x || (int)simXY.y >= _simRes.y) {
+        return;
+    }
+    int simOffset = simXY.x * _simResY + simXY.y;
+    float value = _horizVel[simOffset];
+    if((int)simXY.x < _simRes.x - 1) {
+        value = (value + _horizVel[R(simOffset)]) / 2;
+    }
+
+    float red = value < 0 ? - value : 0;
+    float green = value >=0 ? value : 0;
+    float blue = 0;
+    if(abs(value) > 1.001) {
+        red = 0;
+        green = 0;
+        blue = 1;
+    }
+    if((int)id.x < _renderRes.x && (int)id.y < _renderRes.y) {
+        _renderTexture[renderXY] = float4(red, green, blue, 1);
+    }
+}
+
+[numthreads(8,8,1)]
+void RenderVelV(uint3 id : SV_DispatchThreadID)
+{
+    /*
+    use u as source
+    */
+    int2 renderXY = id.xy;
+    int2 simXY = int2(id.x * _simResX / _renderRes.x, id.y * _simResY / _renderRes.y);
+    if((int)simXY.x >= _simRes.x || (int)simXY.y >= _simRes.y) {
+        return;
+    }
+    int simOffset = simXY.x * _simResY + simXY.y;
+    float value = _vertVel[simOffset];
+    if((int)simXY.y < _simRes.y - 1) {
+        value = (value + _vertVel[U(simOffset)]) / 2;
+    }
+
+    float red = value < 0 ? - value : 0;
+    float green = value >=0 ? value : 0;
+    float blue = 0;
+    if(abs(value) > 1.001) {
+        red = 0;
+        green = 0;
+        blue = 1;
+    }
+    if((int)id.x < _renderRes.x && (int)id.y < _renderRes.y) {
+        _renderTexture[renderXY] = float4(red, green, blue, 1);
+    }
+}

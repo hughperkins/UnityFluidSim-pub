@@ -1,0 +1,46 @@
+#pragma kernel AddColor
+
+#define Buf RWStructuredBuffer
+
+Buf<float> _horizVel;
+Buf<float> _vertVel;
+Buf<int> _isFluid;
+Buf<float4> _m;
+Buf<float4> _colorSources;
+
+int _simResX;
+int _simResY;
+
+float _speedDeltaTime;
+float _colorAddSpeed;
+bool _colorSet;
+
+#include "ShaderUtils.cginc"
+
+float4 mixColor(float4 cur, float4 col, float speed) {
+    // cur = min(col, cur + speed * col * colorAddSpeed + 0.5f * rand(cur.xy));
+    if(_colorSet) {
+        cur = col;
+    } else {
+        cur = min(col, cur + speed * col * _colorAddSpeed * (rand(cur.xy + float2(cur.z, 0.0)) * 0.5f + 0.5f));
+    }
+    // cur = cur + speed * col * colorAddSpeed;
+    // cur = col;
+    return cur;
+}
+
+[numthreads(8,8,1)]
+void AddColor(uint3 id : SV_DispatchThreadID)
+{
+    int2 pos = (int2)id;
+    if(pos.x < _simResX && pos.y < _simResY) {
+    int offset = pos.x * _simResY + pos.y;
+    if(_isFluid[offset] == 1) {
+        if(_colorSources[offset].w == 1) _m[offset] = mixColor(_m[offset], _colorSources[offset], length(float2(_horizVel[offset], _vertVel[offset])) * _speedDeltaTime);
+        // if(s[L(offset)] == 0 && u[offset] > 0) m[offset] = mixColor(m[offset], colorSources[L(offset)], u[offset] * speedDeltaTime);
+        // if(s[R(offset)] == 0 && u[R(offset)] < 0) m[offset] = mixColor(m[offset], colorSources[R(offset)], - u[R(offset)] * speedDeltaTime);
+        // if(s[D(offset)] == 0 && v[offset] > 0) m[offset] = mixColor(m[offset], colorSources[D(offset)], v[offset] * speedDeltaTime);
+        // if(s[U(offset)] == 0 && v[U(offset)] < 0) m[offset] = mixColor(m[offset], colorSources[U(offset)], -v[U(offset)] * speedDeltaTime);
+    }
+    }
+}
