@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using UnityEngine;
 using Utils;
-using Newtonsoft.Json;
+// using Newtonsoft.Json;
 
 namespace LiquidShader.Types {
 

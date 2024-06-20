@@ -2,7 +2,7 @@ using LiquidShader.Types;
 using UnityEngine;
 using Utils;
 using System.IO;
-using Newtonsoft.Json;
+// using Newtonsoft.Json;
 
 namespace LiquidShader {
 public enum ProjectionSolver {
@@ -281,34 +281,6 @@ public class LiquidShaderRenderer : MonoBehaviour
             _syncSrcBuffer = null;
             _syncDstBuffer = null;
         }
-    }
-
-    class Meta {
-        public int simResX;
-        public int simResY;
-        public int frame;
-    }
-
-    public void SaveState(string stateFolder) {
-        var meta = new Meta(){
-            frame=simulationState.frame, simResX=simulationState.simResX, simResY=simulationState.simResY
-        };
-        var metaString = JsonConvert.SerializeObject(meta);
-        var metaFilepath = stateFolder + "/meta.json";
-        using var writer = new StreamWriter(metaFilepath);
-        writer.Write((metaString));
-        simulationState.SaveState(stateFolder);
-    }
-    public void LoadState(string stateFolder) {
-        var metaFilepath = stateFolder + "/meta.json";
-        using var reader = new StreamReader(metaFilepath);
-        var metaString = reader.ReadToEnd();
-        var meta = JsonConvert.DeserializeObject<Meta>(metaString);
-        if (meta.simResX != simulationState.simResX || meta.simResY != simulationState.simResY) {
-            simulationState = new SimulationState(meta.simResX, meta.simResY);
-        }
-        simulationState.frame = meta.frame;
-        simulationState.LoadState(stateFolder);
     }
 }
 }
